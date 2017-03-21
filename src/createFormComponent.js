@@ -7,6 +7,7 @@ import ref from './ref'
 
 export default ({
   name,
+  store,
   path,
   rules,
   initiator,
@@ -54,7 +55,7 @@ export default ({
 
         const formStore = ref._formStore
         if (!formStore.store) {
-          formStore.store = this.context.store
+          formStore.store = store || this.context.store
         }
 
         if (!formStore.isRegistered(path)) {
