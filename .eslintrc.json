@@ -1,0 +1,30 @@
+{
+    "extends": [
+      "eslint:recommended",
+      "plugin:import/recommended",
+      "plugin:react/recommended"
+    ],
+    "parser": "babel-eslint",
+    "env": {
+      "commonjs": true,
+      "es6": true,
+      "browser": true
+    },
+    "plugins": [
+      "import"
+    ],
+    "rules": {
+      "indent": ["error", 2,  { "SwitchCase": 1 }],
+      "max-len": ["error", 80],
+      "no-multi-spaces": [
+        "error",
+        {
+          "exceptions": {
+            "Property": true,
+            "VariableDeclarator": true,
+            "ImportDeclaration": true
+          }
+        }
+      ]
+    }
+}
