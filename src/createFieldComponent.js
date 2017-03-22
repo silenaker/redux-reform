@@ -22,7 +22,7 @@ export default TAG => {
         ])
       ),
       value: PropTypes.any,
-      path: PropTypes.string.isRequired
+      field: PropTypes.string.isRequired
     }
 
     static contextTypes = {
@@ -32,9 +32,9 @@ export default TAG => {
     constructor(props, context) {
       super(props, context)
       
-      this.field = this.context.form.register(this.props.path, new Field(
+      this.field = this.context.form.register(this.props.field, new Field(
         this.context.form,
-        this.props.path,
+        this.props.field,
         this.props.validators
       ))
     }
@@ -65,10 +65,10 @@ export default TAG => {
       }
 
       if (
-        newProps.path &&
-        newProps.path !== this.props.path
+        newProps.field &&
+        newProps.field !== this.props.field
       ) {
-        this.field.path = newProps.path
+        this.field.path = newProps.field
       }
     }
 

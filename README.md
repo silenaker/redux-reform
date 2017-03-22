@@ -3,14 +3,14 @@
 ## Create forms reducer
 ```javascript
 import { combineReducers } from 'redux'
-import { createFormReducer } from 'ruckus-form'
+import { createFormReducer } from 'redux-reform'
 
 const forms = createFormReducer('forms')
 
 export default combineReducers({ forms })
 ```
 
-> *note*: ruckus-form depends `redux-thunk` and `redux-promise` as peer dependencies for async actions, you should apply these middlewares when create store
+> *note*: redux-reform depends `redux-thunk` and `redux-promise` as peer dependencies for async actions, you should apply these middlewares when create store
 >
 > ```javascript
 > import { createStore, applyMiddleware } from 'redux'
@@ -26,7 +26,7 @@ export default combineReducers({ forms })
 
 ```javascript
 import { Component } from 'react'
-import { required, Input } from 'ruckus-form'
+import { required, Input } from 'redux-reform'
 
 const HOC = createForm({
   // this form path is relative to the root mounting
@@ -59,12 +59,12 @@ const HOC = createForm({
 const LoginForm = ({ form, update, submit }) => (
   <form novalidate>
     <div>
-      <label>Username: <Input type="text" path="username"></label>
+      <label>Username: <Input type="text" field="username"></label>
       <div>{ form.validation.username.error }</div>
     </div>
 
     <div>
-      <label>Password: <Input type="password" path="password"></label>
+      <label>Password: <Input type="password" field="password"></label>
       <div>{ form.validation.password.error }</div>
     </div>
 
