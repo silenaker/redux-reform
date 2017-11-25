@@ -1,0 +1,15 @@
+stages:
+  - install
+  - dist
+cache:
+  key: $CI_COMMIT_REF_NAME
+  paths:
+    - node_modules
+install:
+  stage: install
+  script:
+    - npm install
+dist:
+  stage: dist
+  script:
+    - npm run dist
