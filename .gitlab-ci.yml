@@ -1,5 +1,5 @@
 variables:
-  GIT_SSL_NO_VERIFY: "false"
+  GIT_SSL_NO_VERIFY: "true"
 
 stages:
   - install
