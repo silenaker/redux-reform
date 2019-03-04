@@ -1,7 +1,6 @@
 /* eslint-disable max-len */
-import get from 'lodash.get'
-import set from 'lodash.set'
-import unset from 'lodash.unset'
+import { get, set, unset, assign, merge, remove } from 'lodash'
+import invariant from 'invariant'
 import { bindActionCreators } from 'redux'
 import { createAction } from 'redux-actions'
 import { createSelector } from 'reselect'
@@ -9,11 +8,13 @@ import { autobind } from 'core-decorators'
 import { CREATE, REMOVE } from './actionTypes'
 import createUpdateAction from './createUpdateAction'
 import createSubmitAction from './createSubmitAction'
-import { isObject, isFunction, fillObject, immutableAssign } from './helpers/utils'
+import { isObject, isFunction, isPromise, immutableAssign, fillObject } from './helpers/utils'
+import nextTick from './helpers/nextTick'
 
 export default class Form {
   constructor(
     formStore,
+    props,
     path,
     rules,
     initiator,
@@ -26,6 +27,7 @@ export default class Form {
     options
   ) {
     this.formStore = formStore
+    this.props = props
     this.path = path
     this.rules = rules
     this.initiator = initiator
@@ -36,13 +38,20 @@ export default class Form {
     this.createAction = createAction(CREATE, null, () => ({ path }))
     this.removeAction = createAction(REMOVE, null, () => ({ path }))
     this.updateAction = createUpdateAction(null, () => ({ path }), preUpdateAction)
-    this.submitAction = createSubmitAction(
-      ::this.getFormData, null, () => ({ path }), preSubmitAction
-    )
-    this.options = Object.assign(this._getDefaultOptions(), options)
+    this.submitAction = createSubmitAction(::this.getFormData, null, () => ({ path }), preSubmitAction)
+    this.options = assign(this._getDefaultOptions(), options)
     this.connected = 0
     this.refs = {}
     this.fields = {}
+    this._eventHandlers = {}
+    this._updatePendingPromise = null
+    this._pendingUpdates = []
+    this._update = this.dispatchToUpdate
+      ? this.dispatchToUpdate(this.formStore.store.dispatch)
+      : bindActionCreators(this.updateAction, this.formStore.store.dispatch)
+    this._submit = this.dispatchToSubmit
+      ? this.dispatchToSubmit(this.formStore.store.dispatch)
+      : bindActionCreators(this.submitAction, this.formStore.store.dispatch)
   }
 
   _getDefaultOptions() {
@@ -51,45 +60,76 @@ export default class Form {
     }
   }
 
-  register(path, field) {
-    return this.fields[path] = field
-  }
+  register(field) {
+    const path = field.path
+    /* eslint-disable no-undef */
+    if (process.env.NODE_ENV !== 'production') {
+      /* eslint-enable no-undef */
+      invariant(
+        this.getFieldValue(path) !== undefined,
+        `Form "${this.path}" doesn't have this "${path}" path, please check your initiator on CreateForm`
+      )
+    }
 
-  unregister(path) {
-    const field = this.fields[path]
-    delete this.fields[path]
+    if (this.fields[path]) {
+      /* eslint-disable no-undef */
+      if (process.env.NODE_ENV !== 'production') {
+        /* eslint-enable no-undef */
+        if (field.type !== 'radio' && field.type !== 'checkbox') {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `Form "${this.path}" has multiple field components for the same path "${path}",
+            it is recommended to bind only one field (except radio and checkbox) for one path, please check your form render function`
+          )
+        }
+      }
+
+      if (Array.isArray(this.fields[path])) {
+        this.fields[path].push(field)
+      } else {
+        this.fields[path] = [this.fields[path], field]
+      }
+    } else {
+      this.fields[path] = field
+    }
+
     return field
   }
 
+  unregister(field) {
+    const path = field.path
+    if (Array.isArray(this.fields[path])) {
+      remove(this.fields[path], val => val === field)
+      if (!this.fields[path].length) delete this.fields[path]
+    } else {
+      delete this.fields[path]
+    }
+  }
+
   init() {
-    const data = this.initiator(this.formStore.store.getState())
-    const refs = this.refs = {}
-    const traverse = (target, path) => {
-      for (let key in target) {
-        if (target.hasOwnProperty(key)) {
-          if (target[key] instanceof Form) {
-            const propPath = path ? `${path}.${key}` : key
-            const ref = target[key]
-            target[key] = `@[${ref.path}]`
-            refs[propPath] = ref
-          } else if (isObject(target[key])) {
-            traverse(target[key], path ? `${path}.${key}` : key)
-          }
-        } 
+    const data = this.initiator(this.formStore.store.getState(), this.props)
+    const refs = (this.refs = {})
+    const findRefs = (data, path) => {
+      for (let key in data) {
+        if (data[key] instanceof Form) {
+          const propPath = path ? `${path}.${key}` : key
+          const ref = data[key]
+          data[key] = `@[${ref.path}]`
+          refs[propPath] = ref
+        } else if (isObject(data[key]) && !Array.isArray(data[key])) {
+          findRefs(data[key], path ? `${path}.${key}` : key)
+        }
       }
     }
-    traverse(data)
-    const validation = fillObject(data, { valid: true, error: null })
-    Object.keys(refs).forEach(propPath =>
-      set(validation, propPath, `@[${refs[propPath].path}]`)
-    )
+    findRefs(data)
     this.initSelector()
-    return { data, validation }
+    return data
   }
 
   initSelector() {
-    const refInputs = [], propPaths = []
-    for (let [ propPath, ref ] of Object.entries(this.refs)) {
+    const refInputs = []
+    const propPaths = []
+    for (let [propPath, ref] of Object.entries(this.refs)) {
       refInputs.push(() => ref.getFormData())
       propPaths.push(propPath)
     }
@@ -98,7 +138,8 @@ export default class Form {
       this.selector = createSelector(...inputs, (...args) => {
         let form = args.pop()
         for (let i = 0; i < args.length; i++) {
-          const ref = args[i], path = propPaths[i]
+          const ref = args[i]
+          const path = propPaths[i]
           form = immutableAssign(form, {
             data: set({}, path, ref.data),
             validation: set({}, path, ref.validation)
@@ -108,68 +149,132 @@ export default class Form {
       })
     } else {
       this.selector = () => this.getFormData()
-    } 
+    }
   }
 
+  @autobind
   reset() {
     const data = this.init()
+    const formUpdate = { data, validation: { __replace__: true } }
+
     data.__replace__ = true
-    this.update(data)
+
+    this.trigger('reset')
     Object.values(this.refs).forEach(ref => ref.reset())
+    this.update(formUpdate)
   }
 
   create() {
-    this.formStore.store.dispatch(this.createAction(this.init()))
+    const data = this.init()
+    const validation = fillObject(data, { disabled: true })
+    Object.keys(this.refs).forEach(propPath => set(validation, propPath, `@[${this.refs[propPath].path}]`))
+    this.formStore.store.dispatch(this.createAction({ data, validation }))
   }
 
   destroy() {
+    this.destroyed = true
     this.formStore.store.dispatch(this.removeAction())
   }
 
   @autobind
-  update(path, { value, validation } = {}) {
-    const { dispatch, getState } = this.formStore.store
-
-    if (!this._update){
-      if (this.dispatchToUpdate) {
-        this._update = this.dispatchToUpdate(dispatch)
-      } else {
-        this._update = bindActionCreators(this.updateAction, dispatch)
+  _batchUpdate() {
+    this._updatePendingPromise = null
+    if (this._pendingUpdates.length) {
+      const collectPaths = (obj, paths, prefix) => {
+        for (let key in obj) {
+          const path = prefix ? `${prefix}.${key}` : key
+          if (isObject(obj[key]) && !Array.isArray(obj[key])) {
+            collectPaths(obj[key], paths, path)
+          } else {
+            paths.push(path)
+          }
+        }
       }
-    }
+      const updates = this._pendingUpdates.slice()
+      this._pendingUpdates = []
+      const formUpdate = merge({}, ...updates)
 
-    let formUpdates
+      if (formUpdate.data) {
+        const paths = []
+        collectPaths(formUpdate.data, paths)
+        paths.forEach(path => {
+          let field = this.getField(path)
+          field = Array.isArray(field) ? field.slice() : field
+          if (field) {
+            nextTick(() => {
+              field = Array.isArray(field) ? field[0] : field
+              const validation = field.validate(get(formUpdate.data, path))
+              validation && field.updateValidation(validation)
+            })
+          }
+        })
+      }
+
+      this._update(formUpdate)
+    }
+  }
+
+  _triggerBatchUpdate() {
+    return new Promise(resolve =>
+      nextTick(() => {
+        this._batchUpdate()
+        resolve()
+      })
+    )
+  }
+
+  @autobind
+  update(path, { value, validation, force } = {}) {
+    const { getState } = this.formStore.store
+    let formUpdate
+    const pushUpdate = formUpdate => {
+      if (formUpdate === false || formUpdate === undefined) return
+
+      if (formUpdate.data && force) {
+        formUpdate.data.__force__ = true
+      }
+
+      if (formUpdate.validation && force) {
+        formUpdate.validation.__force__ = true
+      }
+
+      this._pendingUpdates.push(formUpdate)
+      if (!this._updatePendingPromise) {
+        this._updatePendingPromise = this._triggerBatchUpdate()
+      }
+      return this._updatePendingPromise
+    }
 
     if (arguments.length < 2) {
-      formUpdates = path
-    }
-    if (value !== undefined) {
-      formUpdates = {
-        data: set({}, path, value)
+      formUpdate = path
+    } else {
+      if (value !== undefined) {
+        formUpdate = { data: set({}, path, value) }
+      }
+
+      if (validation) {
+        formUpdate = formUpdate || {}
+        formUpdate.validation = set({}, path, validation)
       }
     }
-    if (validation) {
-      formUpdates = formUpdates || {} 
-      formUpdates.validation = set({}, path, validation)
-    }
 
-    if (!formUpdates) return
+    if (!formUpdate) return
 
     Object.keys(this.refs).forEach(propPath => {
       let refUpdates
-      if (formUpdates.data) {
-        const refDataUpdates = get(formUpdates.data, propPath)
+      if (formUpdate.data) {
+        const refDataUpdates = get(formUpdate.data, propPath)
         if (isObject(refDataUpdates)) {
           refUpdates = { data: refDataUpdates }
-          unset(formUpdates.data, propPath)
+          unset(formUpdate.data, propPath)
         }
       }
-      if (formUpdates.validation) {
+      if (formUpdate.validation) {
         refUpdates = refUpdates || {}
-        const refValidationUpdates = get(formUpdates.validation, propPath)
+        const refValidationUpdates = get(formUpdate.validation, propPath)
         if (isObject(refValidationUpdates)) {
           refUpdates.validation = refValidationUpdates
-          unset(formUpdates.validation, propPath)
+          unset(formUpdate.validation, propPath)
         }
       }
       if (refUpdates) {
@@ -177,25 +282,33 @@ export default class Form {
       }
     })
 
-    if (formUpdates.data) {
-      formUpdates = this.updatePayloadFilter(formUpdates, this.getFormData(), getState())
+    if (formUpdate.data) {
+      formUpdate = this.updatePayloadFilter(formUpdate, this.getFormData(), getState(), this.props)
+      if (isPromise(formUpdate)) {
+        return formUpdate.then(ret => pushUpdate(ret))
+      }
     }
 
-    this._update(formUpdates)
+    return pushUpdate(formUpdate)
   }
 
   @autobind
   submit() {
-    const { dispatch, getState } = this.formStore.store
-    if (!this._submit) {
-      if (this.dispatchToSubmit) {
-        this._submit = this.dispatchToSubmit(dispatch)
-      } else {
-        this._submit = bindActionCreators(this.submitAction, dispatch)
-      } 
+    if (this._submitPendingPromise) return this._submitPendingPromise
+    this.trigger('submit')
+    this.validate()
+    this._batchUpdate()
+    const { getState } = this.formStore.store
+    const refUpdates = { data: {}, validation: {} }
+    const submitPayload = payload => {
+      if (payload === false || payload === undefined) return
+      this._submitPendingPromise = this._submit(payload, this.props).then(action => {
+        this._submitPendingPromise = null
+        return action
+      })
+      return this._submitPendingPromise
     }
 
-    const refUpdates = { data: {}, validation: {} }
     Object.keys(this.refs).forEach(propPath => {
       const refForm = this.refs[propPath].getFormData()
       set(refUpdates.data, propPath, refForm.data)
@@ -203,17 +316,22 @@ export default class Form {
     })
 
     const form = immutableAssign(this.getFormData(), refUpdates)
-
-    this._submit(this.submitPayloadFilter(form, getState()))
+    const payload = this.submitPayloadFilter(form, getState(), this.props)
+    if (isPromise(payload)) {
+      return payload.then(ret => submitPayload(ret))
+    }
+    return submitPayload(payload)
   }
 
   validate() {
-    const validation = {} 
+    const validation = {}
     Object.keys(this.fields).forEach(fieldPath => {
-      const result = this.fields[fieldPath].validate()
-      if (result) {
-        const { valid, error } = result
-        set(validation, fieldPath, { valid, error })
+      let field = this.fields[fieldPath]
+      field = Array.isArray(field) ? field[0] : field
+      if (field.isDisabled()) return
+      const fieldValidation = field.validate()
+      if (fieldValidation) {
+        set(validation, fieldPath, fieldValidation)
       }
     })
     this.update({ validation })
@@ -241,5 +359,28 @@ export default class Form {
 
   getFieldValidation(path) {
     return get(this.getFormData().validation, path)
+  }
+
+  on(event, cb) {
+    this._eventHandlers[event] = this._eventHandlers[event] || []
+    this._eventHandlers[event].push(cb)
+  }
+
+  off(event, cb) {
+    if (this._eventHandlers[event]) {
+      const index = this._eventHandlers[event].indexOf(cb)
+      if (~index) {
+        this._eventHandlers[event].splice(index, 1)
+      }
+    }
+  }
+
+  trigger(event) {
+    if (this._eventHandlers[event]) {
+      const handlers = this._eventHandlers[event].slice()
+      for (let i = 0; i < handlers.length; i++) {
+        handlers[i]()
+      }
+    }
   }
 }

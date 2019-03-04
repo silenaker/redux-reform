@@ -8,17 +8,20 @@ export default function getValidationErrors(validation = {}) {
       validation[key].hasOwnProperty('valid') &&
       validation[key].hasOwnProperty('error')
     ) {
-      if (!validation[key].valid) {
+      if (
+        !validation[key].valid &&
+        !validation[key].disabled &&
+        !validation[key].fixed
+      ) {
         valid = false
         if (validation[key].error) {
           errors.push(validation[key].error)
         }
       }
     } else if (isObject(validation[key])) {
-      const {
-        errors: errs,
-        valid: _valid
-      } = getValidationErrors(validation[key])
+      const { errors: errs, valid: _valid } = getValidationErrors(
+        validation[key]
+      )
       if (valid) valid = _valid
       errors.push(...errs)
     }

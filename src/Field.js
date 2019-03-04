@@ -1,23 +1,34 @@
-import { isFunction, isObject, parseString } from './helpers/utils'
+import { isFunction, isObject } from './helpers/utils'
 import { autobind } from 'core-decorators'
+import { required } from './validators'
 
 export default class Field {
-  constructor(form, path, validators, el) {
+  constructor(form, path, validators, type, options) {
     this.form = form
     this.path = path
-    this.validators = validators || this.form.getFieldValidators(this.path)
-    this.el = el
-    this.initValidationQueue()
-  }
-
-  setValidators(validators) {
-    this.validators = validators
-    this.initValidationQueue()
+    this.type = type
+    this.options = options
+    this.updateValidators(validators)
+    this.form.on('reset', this._resetEventHandler)
+    this.form.on('submit', this._submitEventHandler)
   }
 
   @autobind
-  setElement(el) {
-    this.el = el
+  _resetEventHandler() {
+    if (this.options.onReset) this.options.onReset.call()
+  }
+
+  @autobind
+  _submitEventHandler() {
+    if (this.options.trim) {
+      this.update(
+        isFunction(this.options.trim)
+          ? this.options.trim(this.getValue())
+          : this.getValue().trim()
+      ).then(() => this.options.onSubmit && this.options.onSubmit.call())
+    } else {
+      this.options.onSubmit && this.options.onSubmit.call()
+    }
   }
 
   initValidationQueue() {
@@ -25,53 +36,55 @@ export default class Field {
       if (isFunction(validator)) return { validator }
       if (isObject(validator)) return validator
     }
-    this.queue = this.validators &&
+    this.queue =
+      this.validators &&
       this.validators.reduce((arr, v) => (arr.push(normalize(v)), arr), [])
   }
 
   validate(value) {
     if (!this.queue) return
-    if (this.el.disabled) return { valid: true, error: null }
     value = value === undefined ? this.getValue() : value
-    const queue = this.queue.slice()
-    const form = this.form.getFormData()
-    const validate = (v) => v.validator(value, form)
-
-    if (this.disabled) {
-      return { value, valid: true, error: null }
+    if (this.options.trim) {
+      value = isFunction(this.options.trim)
+        ? this.options.trim(value)
+        : value.trim()
     }
+    const queue = this.queue.slice()
+    const formData = this.form.getFormData()
+    const validate = v => v.validator(value, formData, this.form.props)
 
     for (let i = 0; i < queue.length; i++) {
-      if (!validate(queue[i])) {
+      if (
+        (queue[i].validator === required || value !== '') &&
+        !validate(queue[i])
+      ) {
         return {
-          value,
           valid: false,
-          error: typeof queue[i].message === 'function' ? 
-            queue[i].message(value, form) : queue[i].message
+          error:
+            typeof queue[i].message === 'function'
+              ? queue[i].message(value, formData, this.form.props)
+              : queue[i].message
         }
       }
     }
-    return { value, valid: true, error: null }
+
+    return { valid: true, error: null }
   }
 
   @autobind
   update(value) {
-    if (value === undefined) {
-      if (this.isCheckbox()) {
-        const currentValue = this.getValue()
-        if (Array.isArray(currentValue)) {
-          value = this.el.checked
-            ? [...currentValue, parseString(this.el.value)]
-            : currentValue.filter(item => item !== parseString(this.el.value))
-        } else {
-          value = this.el.checked
-        }
-      } else {
-        value = parseString(this.el.value)
-      }
-    }
     const validation = this.validate(value)
-    this.form.update(this.path, { value, validation })
+    return this.form.update(this.path, { value, validation })
+  }
+
+  @autobind
+  updateValidation(validation) {
+    this.form.update(this.path, { validation })
+  }
+
+  updateValidators(validators) {
+    this.validators = validators || this.form.getFieldValidators(this.path)
+    this.initValidationQueue()
   }
 
   getValue() {
@@ -82,15 +95,12 @@ export default class Field {
     return this.form.getFieldValidation(this.path)
   }
 
-  isInput() {
-    return this.el.tagName.toLowerCase() === 'input'
+  isDisabled() {
+    return !!this.getValidation().disabled
   }
 
-  isCheckbox() {
-    return this.isInput() && this.el.type === 'checkbox'
-  }
-
-  isRadio() {
-    return this.isInput() && this.el.type === 'radio'
+  destroy() {
+    this.form.off('reset', this._resetEventHandler)
+    this.form.off('submit', this._submitEventHandler)
   }
 }

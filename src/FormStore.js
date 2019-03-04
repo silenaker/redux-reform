@@ -5,7 +5,7 @@ export default class FormStore {
     this.store = store
     this.forms = {}
   }
-  
+
   getFormData(path) {
     return get(this.store.getState(), `${FormStore.PATH}.${path}`)
   }
@@ -13,7 +13,7 @@ export default class FormStore {
   getForm(path) {
     return this.forms[path]
   }
-  
+
   register(path, form) {
     this.forms[path] = form
   }

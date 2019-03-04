@@ -1,6 +1,7 @@
 import { createAction } from 'redux-actions'
 import { isPromise } from './utils'
 import defaultCreateUpdateActionTypes from './createAsyncUpdateActionTypes'
+
 export default (
   name,
   selector,
@@ -13,7 +14,9 @@ export default (
   const asyncActionReq = createAction(UPDATE_REQ, null, metaCreator)
   const _asyncAction = createAction(UPDATE, payloadCreator, metaCreator)
   const asyncActionTer = createAction(UPDATE_TER, null, metaCreator)
+
   if (!asyncAction) asyncAction = _asyncAction
+
   if (selector(getState()).fetching) return
   dispatch(asyncActionReq())
   const action = dispatch(asyncAction(payload, _asyncAction))
